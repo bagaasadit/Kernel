@@ -49,10 +49,6 @@ if mountpoint -q /data; then
 	fi
 fi
 
-## AnyKernel methods (DO NOT CHANGE)
-# import patching functions/variables - see for reference
-. tools/ak3-core.sh;
-
 ## AnyKernel install
 
 ui_print ">>> Calling split_boot"
@@ -62,8 +58,9 @@ ui_print ">>> Calling flash_boot"
 flash_boot || abort "flash_boot failed"
 
 ui_print ">>> Calling flash_dtbo"
-flash_dtbo || abort "flash_dtbo failed"
+flash_generic dtbo || abort "flash_dtbo failed"
 
 ui_print ">>> Installation finished"
 
 ## end install
+
