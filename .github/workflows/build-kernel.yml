@@ -2,12 +2,12 @@
 #
 # Adapted for this fork:
 #   * BakaSU + SUSFS v2.3.0 are built in -> artifact, job and zip names say
-#     BakaSU, matching build.sh (Sixfaced-V5-BakaSU-*.zip)
+#     BakaSU, matching build.sh (Flow-Kernel-v1.0.0-BakaSU-*.zip)
 #     BakaSU is NOT vendored: drivers/kernelsu is a symlink to
 #     ../KernelSU/kernel, and the driver is cloned here from Baka-SU/BakaSU.
 #
 # bakasu branch only: builds on this branch additionally publish
-# Sixfaced-miatoll-BakaSU.zip as a NEW asset on the "latest" release.
+# Flow-Kernel-v1.0.0-miatoll-BakaSU.zip as the release asset on "latest".
 # The KSU and KSUN publishing path is untouched; BakaSU is only uploaded
 # when both of those assets are already present, and the upload can never
 # clobber them because its file name is distinct.
