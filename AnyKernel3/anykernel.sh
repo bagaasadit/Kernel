@@ -4,7 +4,7 @@
 ### AnyKernel setup
 # global properties
 properties() { '
-kernel.string=Sixfaced by Unknown
+kernel.string=Flow Kernel v1.0.0 by bagaasadit
 do.devicecheck=1
 do.modules=0
 do.systemless=1
@@ -29,6 +29,12 @@ PATCH_VBMETA_FLAG=auto;
 
 # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
 . tools/ak3-core.sh;
+
+ui_print " ";
+ui_print "==================================";
+ui_print "        Flow Kernel v1.0.0        ";
+ui_print "          By bagaasadit           ";
+ui_print "==================================";
 
 if mountpoint -q /data; then
 	ui_print " ";
@@ -55,8 +61,8 @@ split_boot || abort "split_boot failed"
 ui_print ">>> Calling flash_boot"
 flash_boot || abort "flash_boot failed"
 
-#ui_print ">>> Calling flash_dtbo"
-#flash_dtbo || abort "flash_dtbo failed"
+ui_print ">>> Calling flash_dtbo"
+flash_dtbo || abort "flash_dtbo failed"
 
 ui_print ">>> Installation finished"
 

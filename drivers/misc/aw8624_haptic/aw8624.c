@@ -2252,7 +2252,6 @@ static int aw8624_haptic_chip_init(struct aw8624 *aw8624)
 	aw8624->activate_mode = aw8624->info.mode;
 	aw8624->ulevel = 128;
 	aw8624->level = AW8624_GAIN_FULL;
-	aw8624->ff_gain = AW8624_STRONG_MAGNITUDE;
 	aw8624->osc_cali_run = 0;
 	ret = aw8624_i2c_read(aw8624, AW8624_REG_WAVSEQ1, &reg_val);
 	aw8624->index = reg_val & 0x7F;
@@ -4688,6 +4687,7 @@ static int aw8624_i2c_probe(struct i2c_client *i2c,
 		ret = -ENOMEM;
 		goto err_irq;
 	}
+	aw8624->ff_gain = 0xffff;
 	ret = aw8624_haptic_init(aw8624);
 	if (ret)
 		goto err_queue;

@@ -323,9 +323,9 @@ struct drv2624_data {
 #endif				/*  */
 	struct work_struct upload_periodic_work;
 	struct work_struct haptics_playback_work;
-	//struct workqueue_struct *cali_write_workqueue;
-	//struct delayed_work cali_write_work;
-	//struct work_struct haptics_set_gain_work;
+	struct work_struct haptics_set_gain_work;
+	struct workqueue_struct *work_queue;
+	u16 ff_gain;
 #ifdef DRV_BOOT_CALIB
 #define DELAY_BOOT_CALIB
 #ifdef DELAY_BOOT_CALIB

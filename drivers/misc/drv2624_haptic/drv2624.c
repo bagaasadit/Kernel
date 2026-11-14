@@ -428,12 +428,46 @@ end:	mutex_unlock(&pDRV2624->lock);
 }
 
 #endif /* ANDROID_TIMED_OUTPUT */
+static inline void drv2624_queue_work(struct drv2624_data *pDRV2624,
+				      struct work_struct *work)
+{
+	if (pDRV2624->work_queue)
+		queue_work(pDRV2624->work_queue, work);
+	else
+		schedule_work(work);
+}
+
+static unsigned char drv2624_calc_rtp_input(int level, u16 ff_gain)
+{
+	u32 scaled;
+
+	if (level <= 0 || ff_gain == 0)
+		return 0;
+	if (level > 0x7fff)
+		level = 0x7fff;
+
+	scaled = ((u32)level * ff_gain) / 0xffffU;
+	scaled = (scaled * 0x7fU + 0x3fffU) / 0x7fffU;
+	return (unsigned char)clamp_t(u32, scaled, 1U, 0x7fU);
+}
+
+static unsigned char drv2624_calc_ram_scale(u16 ff_gain)
+{
+	if (ff_gain >= 0xc000U)
+		return PERCENTAGE_100;
+	if (ff_gain >= 0x8000U)
+		return PERCENTAGE_75;
+	if (ff_gain >= 0x4000U)
+		return PERCENTAGE_50;
+	return PERCENTAGE_25;
+}
+
 static enum hrtimer_restart vibrator_timer_func(struct hrtimer *timer)
 {
 	struct drv2624_data *pDRV2624 =
 	    container_of(timer, struct drv2624_data, haptics_timer);
 	dev_dbg(pDRV2624->dev, "%s\n", __func__);
-	schedule_work(&pDRV2624->vibrator_work);
+	drv2624_queue_work(pDRV2624, &pDRV2624->vibrator_work);
 	return HRTIMER_NORESTART;
 }
 
@@ -1050,7 +1084,7 @@ static int drv2624_playEffect(struct drv2624_data *pDRV2624)
 	dev_dbg(pDRV2624->dev, "effects start\n");
 	pDRV2624->mnVibratorPlaying = YES;
 	if (!pDRV2624->mbIRQUsed) {
-		schedule_work(&pDRV2624->vibrator_work);
+		drv2624_queue_work(pDRV2624, &pDRV2624->vibrator_work);
 	}
 end:	return nResult;
 }
@@ -1584,7 +1618,9 @@ static int drv2624_haptics_upload_effect(struct input_dev *dev,
 	switch (pDRV2624->mnEffectType) {
 	case FF_CONSTANT:
 		play->length = effect->replay.length;
-		play->rtp_input = effect->u.constant.level;
+		play->magnitude = clamp_t(int, effect->u.constant.level, 0, 0x7fff);
+		play->rtp_input = drv2624_calc_rtp_input(
+			play->magnitude, READ_ONCE(pDRV2624->ff_gain));
 		pDRV2624->mnWorkMode = DRV2624_RTP_MODE;
 	/***1-5-1**/
 		play->effect_id = 127;
@@ -1670,7 +1706,8 @@ static int drv2624_haptics_upload_effect(struct input_dev *dev,
 				nResult = -EFAULT;
 				break;
 			}
-			schedule_work(&pDRV2624->upload_periodic_work);
+			drv2624_queue_work(pDRV2624,
+					   &pDRV2624->upload_periodic_work);
 			break;
 		} else if (play->effect_id > pDRV2624->fw_header.fw_effCount
 			   && play->effect_id < 127) {
@@ -1687,6 +1724,11 @@ static int drv2624_haptics_upload_effect(struct input_dev *dev,
 				}
 				play->length = time_ms;
 				play->effect_id = 127;
+				if (play->magnitude <= 0)
+					play->magnitude = 0x7fff;
+				play->rtp_input = drv2624_calc_rtp_input(
+					play->magnitude,
+					READ_ONCE(pDRV2624->ff_gain));
 				pDRV2624->mnEffectType = FF_CONSTANT;
 				pDRV2624->mnWorkMode = DRV2624_RTP_MODE;
 				nResult = 0;
@@ -1711,7 +1753,8 @@ static int drv2624_haptics_upload_effect(struct input_dev *dev,
 			set_running_effect_id(play->effect_id - 1);
 			nResult = 0;
 			pDRV2624->mnWorkMode = DRV2624_NEW_RTP_MODE;
-			schedule_work(&pDRV2624->upload_periodic_work);
+			drv2624_queue_work(pDRV2624,
+					   &pDRV2624->upload_periodic_work);
 			break;
 		}
 		nResult = -EINVAL;
@@ -1776,6 +1819,11 @@ static void haptics_playback_work_routine(struct work_struct *work)
 	switch (pDRV2624->mnWorkMode) {
 	case DRV2624_RAM_MODE:
 		dev_dbg(pDRV2624->dev, "%s:DRV2624_RAM_MODE enter\n", __func__);
+		nResult = drv2624_set_bits(
+			pDRV2624, DRV2624_REG_CONTROL2, SCALE_MASK,
+			drv2624_calc_ram_scale(READ_ONCE(pDRV2624->ff_gain)));
+		if (nResult < 0)
+			break;
 		nResult = drv2624_playEffect(pDRV2624);
 		if ((nResult >= 0) && pDRV2624->mbIRQUsed) {
 			drv2624_enableIRQ(pDRV2624, NO);
@@ -1814,8 +1862,10 @@ static void haptics_playback_work_routine(struct work_struct *work)
 				nResult);
 			break;
 		}
-		nResult =
-		    drv2624_reg_write(pDRV2624, DRV2624_REG_RTP_INPUT, DRV2624_CONSTANT_GAIN);
+		pDRV2624->play.rtp_input = drv2624_calc_rtp_input(
+			pDRV2624->play.magnitude, READ_ONCE(pDRV2624->ff_gain));
+		nResult = drv2624_reg_write(pDRV2624, DRV2624_REG_RTP_INPUT,
+					    pDRV2624->play.rtp_input);
 		if (nResult < 0)
 			break;
 		nResult = drv2624_set_go_bit(pDRV2624, GO);
@@ -1862,13 +1912,17 @@ static int drv2624_haptics_playback(struct input_dev *dev, int effect_id,
 		pDRV2624->mnWorkMode = DRV2624_RTP_MODE;
 		if (hrtimer_active(&pDRV2624->haptics_timer))
 			hrtimer_cancel(&pDRV2624->haptics_timer);
-		schedule_work(&pDRV2624->haptics_playback_work);
+		drv2624_queue_work(pDRV2624, &pDRV2624->haptics_playback_work);
 	} else if ((pDRV2624->mnEffectType == FF_PERIODIC) &&
 		   (pDRV2624->mnWorkMode == DRV2624_RAM_MODE)) {
-		schedule_work(&pDRV2624->haptics_playback_work);
+		if (hrtimer_active(&pDRV2624->haptics_timer))
+			hrtimer_cancel(&pDRV2624->haptics_timer);
+		drv2624_queue_work(pDRV2624, &pDRV2624->haptics_playback_work);
 	} else if ((pDRV2624->mnEffectType == FF_PERIODIC) &&
 		   (pDRV2624->mnWorkMode == DRV2624_NEW_RTP_MODE)) {
-		schedule_work(&pDRV2624->haptics_playback_work);
+		if (hrtimer_active(&pDRV2624->haptics_timer))
+			hrtimer_cancel(&pDRV2624->haptics_timer);
+		drv2624_queue_work(pDRV2624, &pDRV2624->haptics_playback_work);
 	} else {
 		dev_err(pDRV2624->dev, "%s: effect_type(%d) not supported!\n",
 			__func__, pDRV2624->mnEffectType);
@@ -1893,30 +1947,39 @@ static int drv2624_haptics_erase(struct input_dev *dev, int effect_id)
 	return nResult;
 }
 
-/* NOTE: gain range: 0 ~ 0x7f*/
+static void haptics_set_gain_work_routine(struct work_struct *work)
+{
+	struct drv2624_data *pDRV2624 =
+	    container_of(work, struct drv2624_data, haptics_set_gain_work);
+	u16 gain = READ_ONCE(pDRV2624->ff_gain);
+	int nResult = 0;
+
+	mutex_lock(&pDRV2624->lock);
+	if (pDRV2624->mnWorkMode == DRV2624_RTP_MODE) {
+		pDRV2624->play.rtp_input =
+		    drv2624_calc_rtp_input(pDRV2624->play.magnitude, gain);
+		if (pDRV2624->mnVibratorPlaying)
+			nResult = drv2624_reg_write(pDRV2624,
+						    DRV2624_REG_RTP_INPUT,
+						    pDRV2624->play.rtp_input);
+	} else if (pDRV2624->mnWorkMode == DRV2624_RAM_MODE) {
+		nResult = drv2624_set_bits(pDRV2624, DRV2624_REG_CONTROL2,
+					   SCALE_MASK,
+					   drv2624_calc_ram_scale(gain));
+	}
+	if (nResult < 0)
+		dev_err(pDRV2624->dev, "%s: failed to apply gain: %d\n",
+			__func__, nResult);
+	mutex_unlock(&pDRV2624->lock);
+}
+
+/* NOTE: gain range: 0 ~ 0xffff */
 static void drv2624_haptics_set_gain(struct input_dev *dev, u16 gain)
 {
 	struct drv2624_data *pDRV2624 = input_get_drvdata(dev);
-#if 0
-	struct drv2624_constant_playinfo *play = &pDRV2624->play;
-	if (gain == 0)
-		return;
 
-	else if (gain > 0x7f)
-		gain = 0x7f;
-	/*
-	   play->rtp_input =
-	   (gain - LIGHT_MAGNITUDE) * 255 / (STRONG_MAGNITUDE -
-	   LIGHT_MAGNITUDE);
-	 */
-	play->rtp_input = gain;
-	dev_dbg(pDRV2624->dev, "upload constant effect, rtp_input=%d\n",
-		play->rtp_input);
-	dev_dbg(pDRV2624->dev, "enter drv264_reg_write rtp_input\n");
-	//schedule_work(&pDRV2624->haptics_set_gain_work);
-#endif
-	dev_dbg(pDRV2624->dev, "%s: enter\n", __func__);
-
+	WRITE_ONCE(pDRV2624->ff_gain, gain);
+	drv2624_queue_work(pDRV2624, &pDRV2624->haptics_set_gain_work);
 }
 
 static struct file_operations fops = {
@@ -1971,6 +2034,8 @@ static int Haptics_init(struct drv2624_data *pDRV2624)
 		  upload_periodic_work_routine);
 	INIT_WORK(&pDRV2624->haptics_playback_work,
 		  haptics_playback_work_routine);
+	INIT_WORK(&pDRV2624->haptics_set_gain_work,
+		  haptics_set_gain_work_routine);
 #ifndef DELAY_BOOT_CALIB
 	INIT_WORK(&pDRV2624->boot_calib_work,
 		  drv_boot_calib_work_routine);
@@ -2061,7 +2126,7 @@ static irqreturn_t drv2624_irq_handler(int irq, void *dev_id)
 	struct drv2624_data *pDRV2624 = (struct drv2624_data *)dev_id;
 	dev_dbg(pDRV2624->dev, "%s: enter\n", __func__);
 	/* mnWorkMode is an enum, not a WORK_* bitmask. */
-	schedule_work(&pDRV2624->vibrator_work);
+	drv2624_queue_work(pDRV2624, &pDRV2624->vibrator_work);
 	return IRQ_HANDLED;
 }
 
@@ -2357,6 +2422,15 @@ static int drv2624_i2c_probe(struct i2c_client *client,
 	}
 	sysfs_create_group(&pDRV2624->dev->kobj,
 			   &drv2624_vibrator_attribute_group);
+	pDRV2624->ff_gain = 0xffff;
+	pDRV2624->work_queue =
+	    alloc_ordered_workqueue("drv2624_vibrator_work_queue",
+				    WQ_HIGHPRI | WQ_MEM_RECLAIM);
+	if (!pDRV2624->work_queue) {
+		dev_err(&client->dev, "couldn't create vibrator workqueue\n");
+		nResult = -ENOMEM;
+		goto destroy_ff;
+	}
 	ff = pDRV2624->input_dev->ff;
 	ff->upload = drv2624_haptics_upload_effect;
 	ff->playback = drv2624_haptics_playback;
@@ -2366,7 +2440,7 @@ static int drv2624_i2c_probe(struct i2c_client *client,
 	if (nResult) {
 		dev_err(&client->dev, "couldn't register input device: %d\n",
 			nResult);
-		goto destroy_ff;
+		goto destroy_wq;
 	}
 	Haptics_init(pDRV2624);
 	g_DRV2624data = pDRV2624;
@@ -2409,6 +2483,9 @@ static int drv2624_i2c_probe(struct i2c_client *client,
 
 	dev_info(pDRV2624->dev, "drv2624 probe succeeded\n");
 	return 0;
+destroy_wq:
+	if (pDRV2624->work_queue)
+		destroy_workqueue(pDRV2624->work_queue);
 destroy_ff:input_ff_destroy(pDRV2624->input_dev);
 destroy_mutex:mutex_destroy(&pDRV2624->dev_lock);
 free_gpio:
@@ -2438,6 +2515,13 @@ static int drv2624_i2c_remove(struct i2c_client *client)
 		gpio_free(pDRV2624->msPlatData.mnGpioINT);
 	misc_deregister(&drv2624_misc);
 	input_ff_destroy(pDRV2624->input_dev);
+	hrtimer_cancel(&pDRV2624->haptics_timer);
+	cancel_work_sync(&pDRV2624->upload_periodic_work);
+	cancel_work_sync(&pDRV2624->haptics_playback_work);
+	cancel_work_sync(&pDRV2624->haptics_set_gain_work);
+	cancel_work_sync(&pDRV2624->vibrator_work);
+	if (pDRV2624->work_queue)
+		destroy_workqueue(pDRV2624->work_queue);
 	mutex_destroy(&pDRV2624->lock);
 	mutex_destroy(&pDRV2624->dev_lock);
 #ifdef DELAY_BOOT_CALIB

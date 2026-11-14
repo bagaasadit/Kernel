@@ -10,7 +10,7 @@ export LC_ALL=C
 TANGGAL=$(date +"%Y%m%d-%H")
 export ARCH=arm64
 export KBUILD_BUILD_HOST=android-build
-export KBUILD_BUILD_USER="unknown"
+export KBUILD_BUILD_USER="bagaasadit"
 
 # ---------------------------------------------------------------------------
 # Host prerequisites. Check them here, before anything is downloaded, so a
@@ -217,19 +217,33 @@ fi
 }
 function zupload()
 {
-zimage=out/arch/arm64/boot/Image.gz
-if ! [ -a $zimage ];
-then
-echo  " Failed To Compile Kernel"
+kimage=out/arch/arm64/boot/Image
+if [ ! -f "$kimage" ]; then
+echo " Failed To Compile Kernel (missing $kimage)"
 exit 1
-else
-echo -e " Kernel Compile Successful"
-cp -a AnyKernel3 AnyKernel
-cp out/arch/arm64/boot/Image.gz AnyKernel
-cd AnyKernel
-zip -r9 Sixfaced-V5-BakaSU-miatoll-${TANGGAL}.zip *
-cd ../
 fi
+if [ ! -f out/arch/arm64/boot/dtbo.img ]; then
+echo " Failed To Compile dtbo.img"
+exit 1
+fi
+if [ -f out/arch/arm64/boot/dts/qcom/cust-atoll-ab.dtb ]; then
+dtb_src=out/arch/arm64/boot/dts/qcom/cust-atoll-ab.dtb
+elif [ -f out/arch/arm64/boot/dtb.img ]; then
+dtb_src=out/arch/arm64/boot/dtb.img
+else
+echo " Failed To Compile DTB (missing cust-atoll-ab.dtb / dtb.img)"
+exit 1
+fi
+
+echo -e " Kernel Compile Successful"
+rm -rf AnyKernel
+cp -a AnyKernel3 AnyKernel
+cp "$kimage" AnyKernel/Image
+cp "$dtb_src" AnyKernel/dtb
+cp out/arch/arm64/boot/dtbo.img AnyKernel/dtbo.img
+cd AnyKernel
+zip -r9 Flow-Kernel-v1.0.0-BakaSU-miatoll-${TANGGAL}.zip *
+cd ../
 }
 compile
 zupload

@@ -1,4 +1,4 @@
-# Sixfaced Kernel CI — miatoll (SM6250), arm64, 4.14
+# Flow Kernel CI — miatoll (SM6250), arm64, 4.14
 #
 # Adapted for this fork:
 #   * BakaSU + SUSFS v2.3.0 are built in -> artifact, job and zip names say
@@ -18,7 +18,7 @@
 #     iterations still make progress
 #   * artifact upload fails loudly if the zip is missing instead of
 #     silently "warning"
-name: Sixfaced Kernel CI
+name: Flow Kernel CI
 
 on:
   # manual runs, with the toolchain tag overridable for testing a bump
@@ -50,12 +50,12 @@ env:
   NEUTRON_DIR: /home/runner/neutron-clang
   CCACHE_MAXSIZE: 4G
   CCACHE_COMPRESSLEVEL: 1
-  KBUILD_BUILD_USER: sixfaced
+  KBUILD_BUILD_USER: bagaasadit
   KBUILD_BUILD_HOST: builder
 
 jobs:
   build:
-    name: Build Sixfaced (miatoll, arm64, BakaSU-SUSFS)
+    name: Build Flow Kernel v1.0.0 (miatoll, arm64, BakaSU-SUSFS)
     runs-on: ubuntu-24.04
     # LTO + Polly on a 4 vCPU runner is slow; 6h is the GitHub maximum
     timeout-minutes: 360
@@ -70,7 +70,7 @@ jobs:
       - name: Show build inputs
         run: |
           {
-            echo "## Sixfaced build inputs"
+            echo "## Flow Kernel build inputs"
             echo
             echo "| item | value |"
             echo "|---|---|"
@@ -381,17 +381,18 @@ jobs:
         if: success()
         run: |
           set -euo pipefail
-          ZIP=$(ls -1 AnyKernel/Sixfaced-*.zip | head -1)
+          ZIP=$(ls -1 AnyKernel/Flow-Kernel-*.zip | head -1)
           ls -lh "$ZIP"
           {
-            echo "## Sixfaced build artifact"
+            echo "## Flow Kernel v1.0.0 build artifact"
             echo
             echo "| item | value |"
             echo "|---|---|"
             echo "| zip | \`$(basename "$ZIP")\` |"
             echo "| size | $(du -h "$ZIP" | cut -f1) |"
             echo "| sha256 | \`$(sha256sum "$ZIP" | cut -d' ' -f1)\` |"
-            echo "| Image.gz | $(du -h out/arch/arm64/boot/Image.gz | cut -f1) |"
+            echo "| Image | $(du -h out/arch/arm64/boot/Image | cut -f1) |"
+            echo "| dtbo.img | $(du -h out/arch/arm64/boot/dtbo.img | cut -f1) |"
             echo "| clang | \`$("$NEUTRON_DIR/bin/clang" --version | head -1)\` |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
           ccache -s | head -15 || true
@@ -400,8 +401,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Sixfaced-BakaSU-miatoll
-          path: AnyKernel/Sixfaced-*.zip
+          name: Flow-Kernel-v1.0.0-BakaSU-miatoll
+          path: AnyKernel/Flow-Kernel-*.zip
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
@@ -412,7 +413,7 @@ jobs:
           LOG="$RUNNER_TEMP/build.log"
           [ -f "$LOG" ] || : > "$LOG"
           {
-            echo "# Sixfaced CI - FAILED run #${{ github.run_number }}"
+            echo "# Flow Kernel CI - FAILED run #${{ github.run_number }}"
             echo
             echo "- run URL : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- ref     : ${{ github.ref }}"
@@ -483,53 +484,55 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      # Publish straight onto the tag named "latest", the release the project
-      # links people to. Only the KSUN asset is replaced: the file is copied to
-      # a stable name first, so `gh release upload --clobber` overwrites that one
-      # asset and leaves the release title, notes, tag and any other asset
-      # (e.g. the KSU variant) untouched.
+      # Publish straight onto the tag named "latest".
+      # On upstream NothingNormal/Kernel, preserve KSU/KSUN/BakaSU co-existence rules;
+      # on forks (e.g. bagaasadit/Kernel), create the 'latest' release if missing.
       - name: Publish zip to the 'latest' release
         if: success() && github.ref != 'refs/heads/bakasu'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          SRC=$(ls -1 AnyKernel/Sixfaced-*.zip | head -1)
-          OUT="$RUNNER_TEMP/Sixfaced-miatoll-KSUN.zip"
+          SRC=$(ls -1 AnyKernel/Flow-Kernel-*.zip | head -1)
+          OUT="$RUNNER_TEMP/Flow-Kernel-v1.0.0-miatoll-KSUN.zip"
           cp "$SRC" "$OUT"
           ls -lh "$SRC" "$OUT"
-          # the release must already exist - do NOT create or edit it here
-          gh release view latest --json tagName -q '.tagName'
-          gh release upload latest "$OUT" --clobber
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest "$OUT" --title "Latest" --notes "Automated CI builds"
+          else
+            gh release upload latest "$OUT" --clobber
+          fi
           gh release view latest --json assets \
             -q '.assets[] | .name + "  " + (.size|tostring) + " bytes"'
 
-      # bakasu branch only. Adds a third, independently named asset to the same
-      # release. It runs only after verifying that both existing root-solution
-      # zips are already on the release, and --clobber can only replace an
-      # asset whose name matches, so KSU and KSUN are never touched.
       - name: Publish BakaSU zip to the 'latest' release
         if: success() && github.ref == 'refs/heads/bakasu'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          mapfile -t ASSETS < <(gh release view latest --json assets -q '.assets[].name')
-          printf 'existing assets:\n'
-          printf '  %s\n' "${ASSETS[@]}"
-          for want in Sixfaced-miatoll-KSU.zip Sixfaced-miatoll-KSUN.zip; do
-            if printf '%s\n' "${ASSETS[@]}" | grep -qx "$want"; then
-              echo "  ok   $want is present"
-            else
-              echo "::error::latest release is missing $want; refusing to add BakaSU"
-              exit 1
-            fi
-          done
-          SRC=$(ls -1 AnyKernel/Sixfaced-*.zip | head -1)
-          OUT="$RUNNER_TEMP/Sixfaced-miatoll-BakaSU.zip"
+          if [ "${{ github.repository }}" = "NothingNormal/Kernel" ]; then
+            mapfile -t ASSETS < <(gh release view latest --json assets -q '.assets[].name')
+            printf 'existing assets:\n'
+            printf '  %s\n' "${ASSETS[@]}"
+            for want in Sixfaced-miatoll-KSU.zip Sixfaced-miatoll-KSUN.zip; do
+              if printf '%s\n' "${ASSETS[@]}" | grep -qx "$want"; then
+                echo "  ok   $want is present"
+              else
+                echo "::error::latest release is missing $want; refusing to add BakaSU"
+                exit 1
+              fi
+            done
+          fi
+          SRC=$(ls -1 AnyKernel/Flow-Kernel-*.zip | head -1)
+          OUT="$RUNNER_TEMP/Flow-Kernel-v1.0.0-miatoll-BakaSU.zip"
           cp "$SRC" "$OUT"
           ls -lh "$SRC" "$OUT"
-          gh release upload latest "$OUT" --clobber
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest "$OUT" --title "Latest" --notes "Automated BakaSU CI builds"
+          else
+            gh release upload latest "$OUT" --clobber
+          fi
           gh release view latest --json assets \
             -q '.assets[] | .name + "  " + (.size|tostring) + " bytes"'
 
